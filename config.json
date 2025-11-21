@@ -1,0 +1,31 @@
+{
+    "search_configs": [
+        {
+            "name": "Python Developer Jobs",
+            "keyword": "Python Developer",
+            "location": "Bangalore",
+            "experience": "",
+            "max_pages": 2
+        },
+        {
+            "name": "Data Scientist Jobs",
+            "keyword": "Data Scientist",
+            "location": "Mumbai",
+            "experience": "2-5",
+            "max_pages": 1
+        },
+        {
+            "name": "Full Stack Developer",
+            "keyword": "Full Stack Developer",
+            "location": "Hyderabad",
+            "experience": "",
+            "max_pages": 1
+        }
+    ],
+    "scraper_settings": {
+        "headless": true,
+        "scroll_count": 5,
+        "scroll_pause_time": 2.0,
+        "page_load_wait": 3
+    }
+}
