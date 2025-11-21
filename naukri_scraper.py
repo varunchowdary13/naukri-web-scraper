@@ -6,15 +6,17 @@ A custom web scraper to extract job listings from Naukri.com
 import time
 import json
 import logging
+import re
+import argparse
 from datetime import datetime
 from typing import List, Dict, Optional
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import argparse
 
 
 class NaukriScraper:
@@ -46,7 +48,7 @@ class NaukriScraper:
         
     def setup_driver(self, headless: bool) -> webdriver.Chrome:
         """
-        Setup Chrome WebDriver with appropriate options
+        Setup Chrome WebDriver
         
         Args:
             headless (bool): Run in headless mode
@@ -68,113 +70,18 @@ class NaukriScraper:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        self.logger.info("Initializing Chrome WebDriver...")
+        self.logger.info("Launching new Chrome WebDriver...")
         driver = webdriver.Chrome(options=chrome_options)
         driver.maximize_window()
         
         return driver
     
-    def wait_for_login(self, timeout: int = 120) -> bool:
-        """
-        Open Naukri login page and wait for user to login manually
-        
-        Args:
-            timeout (int): Maximum time to wait in seconds (default: 120 = 2 minutes)
-            
-        Returns:
-            bool: True if login successful, False otherwise
-        """
-        login_url = "https://www.naukri.com/nlogin/login"
-        
-        print("\n" + "=" * 70)
-        print("USER LOGIN REQUIRED")
-        print("=" * 70)
-        print("Opening Naukri login page...")
-        print("Please login using your credentials (username/password or Google)")
-        print(f"You have {timeout} seconds ({timeout//60} minutes) to complete login.")
-        print("The scraper will automatically detect when you're logged in.")
-        print("=" * 70 + "\n")
-        
-        self.logger.info("Opening Naukri login page for user authentication")
-        self.driver.get(login_url)
-        
-        # Wait for user to login - check every 5 seconds
-        check_interval = 5
-        elapsed = 0
-        
-        while elapsed < timeout:
-            time.sleep(check_interval)
-            elapsed += check_interval
-            
-            # Check if user is logged in by looking for profile indicators
-            is_logged_in = self._check_login_status()
-            
-            if is_logged_in:
-                print("\n✓ Login successful! Proceeding with scraping...")
-                self.logger.info("User login detected - proceeding with scraping")
-                
-                # Navigate to home page after login
-                self.driver.get(self.base_url)
-                time.sleep(2)
-                
-                return True
-            else:
-                remaining = timeout - elapsed
-                if remaining > 0:
-                    print(f"Waiting for login... ({remaining} seconds remaining)", end='\r')
-        
-        print("\n\n✗ Login timeout! Please login faster next time.")
-        self.logger.warning("Login timeout - user did not complete login in time")
-        return False
-    
-    def _check_login_status(self) -> bool:
-        """
-        Check if user is currently logged in to Naukri
-        
-        Returns:
-            bool: True if logged in, False otherwise
-        """
-        try:
-            # Method 1: Check for user profile/name element
-            profile_selectors = [
-                '.nI-gNb-drawer__icon',  # Profile icon
-                '[class*="user-name"]',  # User name
-                '[class*="userinfo"]',  # User info
-                'div.nI-gNb-drawer__icon',  # Drawer icon
-                '.nI-gNb-menuItems__profile',  # Profile menu
-            ]
-            
-            for selector in profile_selectors:
-                try:
-                    elem = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if elem and elem.is_displayed():
-                        return True
-                except NoSuchElementException:
-                    continue
-            
-            # Method 2: Check if we're NOT on login page anymore
-            current_url = self.driver.current_url
-            if 'nlogin' not in current_url and 'login' not in current_url.lower():
-                # Additional check: look for any user-specific elements
-                try:
-                    # Check for elements that only appear when logged in
-                    user_elements = self.driver.find_elements(By.CSS_SELECTOR, '[class*="user"], [class*="profile"]')
-                    if len(user_elements) > 3:  # If we find multiple user-related elements
-                        return True
-                except:
-                    pass
-            
-            return False
-            
-        except Exception as e:
-            self.logger.debug(f"Error checking login status: {str(e)}")
-            return False
-    
     def build_search_url(self, 
                         keyword: str, 
                         location: str = "", 
                         experience: str = "",
-                        salary: str = "") -> str:
+                        salary: str = "",
+                        posted_within_days: int = 1) -> str:
         """
         Build search URL with parameters
         
@@ -183,6 +90,7 @@ class NaukriScraper:
             location (str): Job location
             experience (str): Experience level (e.g., "0-2", "2-5")
             salary (str): Salary range
+            posted_within_days (int): Filter jobs posted within last N days (default: 1 = last 24 hours)
             
         Returns:
             str: Formatted search URL
@@ -194,6 +102,14 @@ class NaukriScraper:
             search_url += f"-in-{location.replace(' ', '-')}"
         
         params = []
+        
+        # Add "posted within" filter (1 = last 24 hours)
+        if posted_within_days == 1:
+            params.append("freshness=1")
+        
+        # Add sort by date (newest first)
+        params.append("sort=date")
+        
         if experience:
             params.append(f"experience={experience}")
         if salary:
@@ -204,68 +120,16 @@ class NaukriScraper:
         
         return search_url
     
-    def scroll_page(self, scroll_pause_time: float = 2.0, max_scrolls: int = 5):
-        """
-        Scroll the page to load dynamic content
-        
-        Args:
-            scroll_pause_time (float): Time to wait between scrolls
-            max_scrolls (int): Maximum number of scrolls
-        """
-        for i in range(max_scrolls):
-            # Scroll to the bottom
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(scroll_pause_time)
-            self.logger.info(f"Scrolled {i+1}/{max_scrolls} times")
-    
-    def extract_job_cards(self, deep_scrape: bool = False) -> List[Dict]:
-        """
-        Extract job information from job cards on the page
-        
-        Args:
-            deep_scrape (bool): If True, visit each job page to get apply link
-            
-        Returns:
-            List[Dict]: List of job dictionaries
-        """
-        jobs = []
-        
-        try:
-            # Wait for job listings to load
-            wait = WebDriverWait(self.driver, 10)
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".srp-jobtuple-wrapper, .cust-job-tuple")))
-            
-            # Find all job cards - Naukri uses multiple class names for job cards
-            job_cards = self.driver.find_elements(By.CSS_SELECTOR, ".srp-jobtuple-wrapper, .cust-job-tuple")
-            self.logger.info(f"Found {len(job_cards)} job listings")
-            
-            for idx, card in enumerate(job_cards, 1):
-                try:
-                    job_info = self.extract_job_info(card, idx, deep_scrape=deep_scrape)
-                    if job_info:
-                        jobs.append(job_info)
-                        if deep_scrape:
-                            self.logger.info(f"Job {idx}: {job_info['title']} - Apply type: {job_info['apply_type']}")
-                except Exception as e:
-                    self.logger.warning(f"Error extracting job {idx}: {str(e)}")
-                    continue
-            
-        except TimeoutException:
-            self.logger.error("Timeout waiting for job listings to load")
-        except Exception as e:
-            self.logger.error(f"Error extracting job cards: {str(e)}")
-        
-        return jobs
-    
     def get_apply_link(self, job_url: str) -> Dict[str, str]:
         """
-        Visit job details page and extract apply link from the Apply button
+        Visit job details page and extract full description.
+        Does NOT click apply button.
         
         Args:
             job_url (str): URL of the job details page
             
         Returns:
-            Dict: Dictionary with apply_link and apply_type
+            Dict: Dictionary with apply_link (same as job_url), apply_type, and full_description
         """
         original_window = self.driver.current_window_handle
         
@@ -279,117 +143,42 @@ class NaukriScraper:
             self.driver.switch_to.window(new_window)
             time.sleep(2)  # Wait for page to load
             
-            # Try to find and extract apply link
+            result = {
+                'apply_link': job_url,  # Just return the post URL
+                'apply_type': 'naukri',
+                'full_description': 'N/A'
+            }
+            
+            # Extract full job description
             try:
-                # Strategy 1: Look for "Apply on company site" button with direct link
-                try:
-                    external_btn = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Apply on company site')] | //a[contains(text(), 'Apply on company site')]")
-                    
-                    # Check if it's an anchor tag with href
-                    if external_btn.tag_name == 'a':
-                        external_link = external_btn.get_attribute('href')
-                        if external_link and 'naukri.com' not in external_link:
-                            self.driver.close()
-                            self.driver.switch_to.window(original_window)
-                            return {
-                                'apply_link': external_link,
-                                'apply_type': 'external'
-                            }
-                    
-                    # If it's a button, try to get the onclick URL
-                    onclick = external_btn.get_attribute('onclick')
-                    if onclick and 'http' in onclick:
-                        # Extract URL from onclick
-                        import re
-                        urls = re.findall(r'https?://[^\'"]+', onclick)
-                        if urls and 'naukri.com' not in urls[0]:
-                            self.driver.close()
-                            self.driver.switch_to.window(original_window)
-                            return {
-                                'apply_link': urls[0],
-                                'apply_type': 'external'
-                            }
-                    
-                    # Try clicking and capturing redirect
+                desc_selectors = [
+                    '.job-desc',
+                    '.job-description',
+                    '[class*="description"]',
+                    '.styles_JDC__dang-inner-html__h0K4t',
+                ]
+                
+                for selector in desc_selectors:
                     try:
-                        # Get current URL
-                        current_url_before = self.driver.current_url
-                        
-                        # Click the button
-                        external_btn.click()
-                        time.sleep(2)
-                        
-                        # Check if we were redirected or new window opened
-                        if len(self.driver.window_handles) > 2:
-                            # New window opened - switch to it
-                            newest_window = [w for w in self.driver.window_handles if w not in [original_window, new_window]][0]
-                            self.driver.switch_to.window(newest_window)
-                            redirect_url = self.driver.current_url
-                            self.driver.close()
-                            self.driver.switch_to.window(new_window)
-                            self.driver.close()
-                            self.driver.switch_to.window(original_window)
-                            
-                            if 'naukri.com' not in redirect_url:
-                                return {
-                                    'apply_link': redirect_url,
-                                    'apply_type': 'external'
-                                }
-                        elif self.driver.current_url != current_url_before:
-                            # Same window redirected
-                            redirect_url = self.driver.current_url
-                            self.driver.close()
-                            self.driver.switch_to.window(original_window)
-                            
-                            if 'naukri.com' not in redirect_url:
-                                return {
-                                    'apply_link': redirect_url,
-                                    'apply_type': 'external'
-                                }
-                    except:
-                        pass
-                        
-                except NoSuchElementException:
-                    pass
-                
-                # Strategy 2: Look for regular "Apply" button
-                try:
-                    apply_btn = self.driver.find_element(By.ID, "apply-button")
-                    
-                    # Check if it's actually a link
-                    if apply_btn.tag_name == 'a':
-                        apply_link = apply_btn.get_attribute('href')
-                        if apply_link:
-                            self.driver.close()
-                            self.driver.switch_to.window(original_window)
-                            return {
-                                'apply_link': apply_link,
-                                'apply_type': 'naukri'
-                            }
-                except NoSuchElementException:
-                    pass
-                
-                # If no apply link found, use the job details page URL
-                current_url = self.driver.current_url
-                self.driver.close()
-                self.driver.switch_to.window(original_window)
-                
-                return {
-                    'apply_link': current_url,
-                    'apply_type': 'naukri' # Requires Naukri login/interaction
-                }
-                
+                        desc_elem = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        if desc_elem:
+                            full_desc = desc_elem.text.strip()
+                            if full_desc and len(full_desc) > 50:
+                                result['full_description'] = full_desc
+                                break
+                    except NoSuchElementException:
+                        continue
             except Exception as e:
-                self.logger.warning(f"Error extracting apply link: {str(e)}")
-                self.driver.close()
-                self.driver.switch_to.window(original_window)
-                return {
-                    'apply_link': job_url,
-                    'apply_type': 'naukri'
-                }
+                self.logger.debug(f"Could not extract full description: {str(e)}")
+            
+            # Close the tab
+            self.driver.close()
+            self.driver.switch_to.window(original_window)
+            
+            return result
                 
         except Exception as e:
-            # If anything goes wrong, close extra windows and return original URL
+            # If anything goes wrong, close extra windows and return result
             try:
                 for window in self.driver.window_handles:
                     if window != original_window:
@@ -401,7 +190,8 @@ class NaukriScraper:
             
             return {
                 'apply_link': job_url,
-                'apply_type': 'naukri'
+                'apply_type': 'naukri',
+                'full_description': 'N/A'
             }
     
     def extract_job_info(self, card, index: int, deep_scrape: bool = False) -> Optional[Dict]:
@@ -421,40 +211,71 @@ class NaukriScraper:
             'scraped_at': datetime.now().isoformat()
         }
         
+        # Extract Job ID for sorting
         try:
-            # Job Title and Link (combined in one element: <a class="title">)
+            job_id = card.get_attribute('data-job-id')
+            if job_id:
+                job_data['job_id'] = int(job_id)
+            else:
+                # Try to extract from tuple ID
+                tuple_id = card.get_attribute('id')
+                if tuple_id:
+                    job_data['job_id'] = int(''.join(filter(str.isdigit, tuple_id)))
+                else:
+                    job_data['job_id'] = 0
+        except:
+            job_data['job_id'] = 0
+        
+        try:
+            # Job Title and Link
             title_elem = card.find_element(By.CSS_SELECTOR, "a.title")
             job_data['title'] = title_elem.text.strip()
             
-            # Get the job link - ensure it's complete
+            # Get the job link
             job_link = title_elem.get_attribute('href')
-            
-            # Ensure the link is absolute
             if job_link and not job_link.startswith('http'):
                 job_link = self.base_url + job_link
             
             job_data['job_details_url'] = job_link
             
-            # Deep scrape: visit job page to get apply link
+            # If we didn't get job_id from attribute, try from link
+            if job_data['job_id'] == 0 and job_link:
+                try:
+                    match = re.search(r'(\d+)$', job_link)
+                    if match:
+                        job_data['job_id'] = int(match.group(1))
+                except:
+                    pass
+            
+            # Deep scrape logic
             if deep_scrape and job_link:
                 apply_info = self.get_apply_link(job_link)
                 job_data['apply_link'] = apply_info['apply_link']
                 job_data['apply_type'] = apply_info['apply_type']
+                job_data['description'] = apply_info.get('full_description', 'N/A')
             else:
-                # If not deep scraping, just use the job details URL
                 job_data['apply_link'] = job_link
                 job_data['apply_type'] = 'naukri'
+                try:
+                    desc_elem = card.find_element(By.CLASS_NAME, "job-desc")
+                    job_data['description'] = desc_elem.text.strip()
+                except NoSuchElementException:
+                    job_data['description'] = "N/A"
             
         except NoSuchElementException:
             self.logger.warning(f"Could not find title/link for job {index}")
             return None
         
-        # Company Name (optional fields from here)
+        # Company Name
         try:
             company_elem = card.find_element(By.CSS_SELECTOR, "a.comp-name")
             job_data['company'] = company_elem.text.strip()
         except NoSuchElementException:
-            job_data['company'] = "N/A"
+            try:
+                company_elem = card.find_element(By.CSS_SELECTOR, ".company-name")
+                job_data['company'] = company_elem.text.strip()
+            except:
+                job_data['company'] = "N/A"
         
         # Experience
         try:
@@ -462,7 +283,7 @@ class NaukriScraper:
             job_data['experience'] = exp_elem.text.strip()
         except NoSuchElementException:
             job_data['experience'] = "N/A"
-        
+            
         # Salary
         try:
             salary_elem = card.find_element(By.CLASS_NAME, "sal")
@@ -477,13 +298,6 @@ class NaukriScraper:
         except NoSuchElementException:
             job_data['location'] = "N/A"
         
-        # Job Description/Skills
-        try:
-            desc_elem = card.find_element(By.CLASS_NAME, "job-desc")
-            job_data['description'] = desc_elem.text.strip()
-        except NoSuchElementException:
-            job_data['description'] = "N/A"
-        
         # Posted Date
         try:
             date_elem = card.find_element(By.CLASS_NAME, "job-post-day")
@@ -493,89 +307,225 @@ class NaukriScraper:
         
         return job_data
     
+    def extract_job_cards(self, deep_scrape: bool = False, max_jobs_needed: int = None) -> List[Dict]:
+        """
+        Extract job information from job cards on the page
+        
+        Args:
+            deep_scrape (bool): If True, visit each job page to get apply link
+            max_jobs_needed (int): Maximum number of jobs to extract
+            
+        Returns:
+            List[Dict]: List of job dictionaries
+        """
+        jobs = []
+        
+        try:
+            wait = WebDriverWait(self.driver, 10)
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".srp-jobtuple-wrapper, .cust-job-tuple")))
+            
+            job_cards = self.driver.find_elements(By.CSS_SELECTOR, ".srp-jobtuple-wrapper, .cust-job-tuple")
+            self.logger.info(f"Found {len(job_cards)} job listings")
+            
+            for idx, card in enumerate(job_cards, 1):
+                if max_jobs_needed and len(jobs) >= max_jobs_needed:
+                    self.logger.info(f"Reached max jobs limit ({max_jobs_needed}), stopping extraction")
+                    break
+                
+                try:
+                    job_info = self.extract_job_info(card, idx, deep_scrape=deep_scrape)
+                    if job_info:
+                        jobs.append(job_info)
+                        if deep_scrape:
+                            self.logger.info(f"Job {len(jobs)}: {job_info['title']} - Apply type: {job_info['apply_type']}")
+                except Exception as e:
+                    self.logger.warning(f"Error extracting job {idx}: {str(e)}")
+                    continue
+            
+        except TimeoutException:
+            self.logger.error("Timeout waiting for job listings to load")
+        except Exception as e:
+            self.logger.error(f"Error extracting job cards: {str(e)}")
+        
+        return jobs
+    
     def scrape_jobs(self, 
                    keyword: str, 
                    location: str = "",
                    experience: str = "",
-                   max_pages: int = 1,
-                   scroll_count: int = 5,
-                   deep_scrape: bool = False,
-                   require_login: bool = False) -> List[Dict]:
+                   max_jobs: int = 40,
+                   deep_scrape: bool = False) -> List[Dict]:
         """
-        Main scraping function
+        Main scraping function with auto-pagination and UI sorting
         
         Args:
             keyword (str): Job search keyword
             location (str): Job location
             experience (str): Experience level
-            max_pages (int): Maximum number of pages to scrape
-            scroll_count (int): Number of times to scroll per page
+            max_jobs (int): Maximum number of jobs to scrape
             deep_scrape (bool): If True, visit each job to extract apply link
-            require_login (bool): If True, prompt user to login first
             
         Returns:
-            List[Dict]: List of all scraped jobs
+            List[Dict]: List of scraped jobs
         """
-        # Step 1: Handle login if required
-        if require_login:
-            login_success = self.wait_for_login(timeout=120)
-            if not login_success:
-                self.logger.error("Login failed or timed out - cannot proceed")
-                print("\n✗ Scraping aborted: Login required but not completed.")
-                return []
-            print("\n" + "=" * 70)
-            print("Starting job scraping...")
-            print("=" * 70 + "\n")
+        print("\n" + "=" * 70)
+        print("Starting job scraping...")
+        print("=" * 70 + "\n")
         
         all_jobs = []
+        page = 1
         
-        for page in range(1, max_pages + 1):
-            self.logger.info(f"Scraping page {page}/{max_pages}")
+        while len(all_jobs) < max_jobs:
+            self.logger.info(f"Scraping page {page} (collected {len(all_jobs)}/{max_jobs} jobs so far)")
+            print(f"📄 Page {page}: {len(all_jobs)}/{max_jobs} jobs collected so far...")
             
-            # Build URL
-            search_url = self.build_search_url(keyword, location, experience)
+            search_url = self.build_search_url(keyword, location, experience, posted_within_days=1)
             if page > 1:
                 search_url += f"&page={page}" if "?" in search_url else f"?page={page}"
             
             self.logger.info(f"Accessing URL: {search_url}")
             
             try:
-                # Navigate to search page
                 self.driver.get(search_url)
-                time.sleep(3)  # Wait for initial load
+                time.sleep(3)
                 
-                # Scroll to load more content
-                self.scroll_page(scroll_pause_time=2.0, max_scrolls=scroll_count)
+                # UI SORTING LOGIC
+                if page == 1:
+                    try:
+                        self.logger.info("Attempting to switch sort to 'Date' via UI...")
+                        print("⚡ Trying to click 'Sort by' dropdown...")
+                        
+                        sort_button = None
+                        try:
+                            sort_xpath = "//*[contains(text(), 'Sort by')]"
+                            sort_button = self.driver.find_element(By.XPATH, sort_xpath)
+                        except:
+                            sort_button = self.driver.find_element(By.CSS_SELECTOR, ".sort-droopdown, .sort-label")
+                            
+                        if sort_button:
+                            self.driver.execute_script("arguments[0].style.border='3px solid red'", sort_button)
+                            time.sleep(1)
+                            self.driver.execute_script("arguments[0].click();", sort_button)
+                            time.sleep(2)
+                            
+                            print("⚡ Looking for 'Date' option...")
+                            date_option = None
+                            try:
+                                date_xpath = "//li//*[contains(text(), 'Date')] | //a[contains(text(), 'Date')]"
+                                date_option = self.driver.find_element(By.XPATH, date_xpath)
+                            except:
+                                date_option = self.driver.find_element(By.CSS_SELECTOR, "ul.dropdown li:nth-child(2)")
+                                
+                            if date_option:
+                                self.driver.execute_script("arguments[0].style.backgroundColor='yellow'", date_option)
+                                time.sleep(1)
+                                self.driver.execute_script("arguments[0].click();", date_option)
+                                print("✓ Clicked 'Date' option!")
+                                time.sleep(3)
+                            else:
+                                print("✗ Could not find 'Date' option to click")
+                                
+                    except Exception as e:
+                        print(f"⚠ UI Sort failed: {str(e)}")
+                        self.logger.warning(f"UI Sort failed: {e}")
                 
-                # Extract jobs from current page
-                page_jobs = self.extract_job_cards(deep_scrape=deep_scrape)
+                # Dynamic scrolling
+                current_job_count = 0
+                scrolls = 0
+                max_scrolls_limit = 10
+                
+                while current_job_count < max_jobs and scrolls < max_scrolls_limit:
+                    job_cards = self.driver.find_elements(By.CSS_SELECTOR, ".srp-jobtuple-wrapper, .cust-job-tuple")
+                    current_job_count = len(job_cards)
+                    
+                    if current_job_count >= max_jobs:
+                        self.logger.info(f"Found enough jobs ({current_job_count} >= {max_jobs}), stopping scroll.")
+                        break
+                        
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)
+                    scrolls += 1
+                    self.logger.info(f"Scrolled {scrolls} times, found {current_job_count} jobs so far...")
+                
+                jobs_remaining = max_jobs - len(all_jobs)
+                page_jobs = self.extract_job_cards(deep_scrape=deep_scrape, max_jobs_needed=jobs_remaining)
+                
+                if not page_jobs:
+                    self.logger.info("No more jobs found, stopping pagination")
+                    print("✓ No more jobs available")
+                    break
+                
                 all_jobs.extend(page_jobs)
                 
-                self.logger.info(f"Extracted {len(page_jobs)} jobs from page {page}")
+                self.logger.info(f"Extracted {len(page_jobs)} jobs from page {page}, total now: {len(all_jobs)}")
+                print(f"✓ Collected {len(all_jobs)}/{max_jobs} jobs")
                 
-                # Be polite - wait before next page
-                if page < max_pages:
-                    time.sleep(3)
+                if len(all_jobs) >= max_jobs:
+                    self.logger.info(f"Reached max_jobs limit ({max_jobs})")
+                    print(f"✓ Collected maximum {max_jobs} jobs!")
+                    break
+                
+                page += 1
+                time.sleep(2)
                     
             except Exception as e:
                 self.logger.error(f"Error scraping page {page}: {str(e)}")
-                continue
+                break
+        
+        # Local Sorting Logic
+        def parse_date_for_sorting(job):
+            posted = job.get('posted_date', '').lower()
+            job_id = job.get('job_id', 0)
+            days_ago = 999
+            
+            if not posted or posted == 'n/a':
+                days_ago = 999
+            elif 'just now' in posted:
+                days_ago = -0.2
+            elif 'few hours' in posted:
+                days_ago = -0.1
+            elif 'today' in posted:
+                days_ago = 0
+            elif 'hour' in posted:
+                days_ago = 0
+            elif 'day' in posted:
+                try:
+                    match = re.search(r'(\d+)', posted)
+                    days_ago = int(match.group(1)) if match else 1
+                except:
+                    days_ago = 1
+            elif 'week' in posted:
+                try:
+                    match = re.search(r'(\d+)', posted)
+                    days_ago = int(match.group(1)) * 7 if match else 7
+                except:
+                    days_ago = 7
+            elif 'month' in posted:
+                days_ago = 30
+            
+            return (days_ago, -job_id)
+        
+        all_jobs.sort(key=parse_date_for_sorting)
+        self.logger.info(f"Sorted {len(all_jobs)} jobs by recency (newest first)")
+        
+        print("\n" + "="*80)
+        print(f"FINAL SORTED LIST ({len(all_jobs)} jobs)")
+        print("="*80)
+        print(f"{'#':<4} | {'Posted':<15} | {'Job ID':<12} | {'Title'}")
+        print("-" * 80)
+        for i, job in enumerate(all_jobs):
+            print(f"{i+1:<4} | {job.get('posted_date', 'N/A'):<15} | {job.get('job_id', 0):<12} | {job.get('title', 'N/A')[:40]}")
+        print("="*80 + "\n")
         
         self.jobs_data = all_jobs
         return all_jobs
     
     def save_to_json(self, filename: str = None):
-        """
-        Save scraped jobs to JSON file
-        
-        Args:
-            filename (str): Output filename (optional)
-        """
+        """Save scraped jobs to JSON file"""
         if not filename:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"naukri_jobs_{timestamp}.json"
         
-        # Ensure .json extension
         if not filename.endswith('.json'):
             filename += '.json'
         
@@ -603,56 +553,47 @@ class NaukriScraper:
 
 def main():
     """Main entry point for CLI usage"""
-    parser = argparse.ArgumentParser(description='Naukri.com Job Scraper')
-    parser.add_argument('--keyword', '-k', required=True, help='Job search keyword (e.g., "Python Developer")')
-    parser.add_argument('--location', '-l', default='', help='Job location (e.g., "Bangalore")')
-    parser.add_argument('--experience', '-e', default='', help='Experience range (e.g., "2-5")')
-    parser.add_argument('--pages', '-p', type=int, default=1, help='Number of pages to scrape (default: 1)')
+    parser = argparse.ArgumentParser(description='Naukri.com Job Scraper - Auto-paginates for last 24hrs jobs')
+    parser.add_argument('--keyword', '-k', required=True, help='Job search keyword')
+    parser.add_argument('--location', '-l', default='', help='Job location')
+    parser.add_argument('--experience', '-e', default='', help='Experience range')
+    parser.add_argument('--max-jobs', '-m', type=int, default=40, help='Maximum jobs to scrape')
     parser.add_argument('--output', '-o', help='Output JSON filename')
     parser.add_argument('--headless', action='store_true', help='Run browser in headless mode')
-    parser.add_argument('--deep-scrape', action='store_true', help='Visit each job to extract apply link (slower but more accurate)')
-    parser.add_argument('--login', action='store_true', help='Login to Naukri before scraping (required for actual apply links)')
+    parser.add_argument('--deep-scrape', action='store_true', help='Visit each job to extract description')
     
     args = parser.parse_args()
     
-    print("=" * 60)
-    print("Naukri.com Job Scraper")
-    print("=" * 60)
+    print("=" * 70)
+    print("Naukri.com Job Scraper - Last 24 Hours")
+    print("=" * 70)
     print(f"Keyword: {args.keyword}")
     print(f"Location: {args.location or 'Any'}")
     print(f"Experience: {args.experience or 'Any'}")
-    print(f"Pages: {args.pages}")
+    print(f"Max Jobs: {args.max_jobs}")
     print(f"Deep Scrape: {'Yes' if args.deep_scrape else 'No'}")
-    print(f"Login Required: {'Yes' if args.login else 'No'}")
-    print("=" * 60)
-    
-    # Note: Headless mode is incompatible with login
-    if args.login and args.headless:
-        print("\n⚠ Warning: Headless mode disabled because login requires visible browser.")
-        args.headless = False
+    print("=" * 70)
     
     scraper = NaukriScraper(headless=args.headless)
     
     try:
-        # Scrape jobs
         jobs = scraper.scrape_jobs(
             keyword=args.keyword,
             location=args.location,
             experience=args.experience,
-            max_pages=args.pages,
-            deep_scrape=args.deep_scrape,
-            require_login=args.login
+            max_jobs=args.max_jobs,
+            deep_scrape=args.deep_scrape
         )
         
-        print(f"\n✓ Successfully scraped {len(jobs)} jobs!")
-        
-        # Save to JSON
-        scraper.save_to_json(args.output)
-        
+        if jobs:
+            scraper.save_to_json(args.output)
+        else:
+            print("\nNo jobs found matching criteria.")
+            
+    except KeyboardInterrupt:
+        print("\n\nScraping interrupted by user.")
     except Exception as e:
-        print(f"\n✗ Error: {str(e)}")
-        logging.error(f"Scraping failed: {str(e)}")
-        
+        print(f"\n\nAn error occurred: {str(e)}")
     finally:
         scraper.close()
 

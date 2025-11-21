@@ -1,11 +1,10 @@
 """
-Batch Job Scraper
-Run multiple scraping jobs based on configuration file
+Single Job Search Scraper
+Run job scraping based on config.json configuration
 """
 
 import json
 import os
-import time
 from datetime import datetime
 from naukri_scraper import NaukriScraper
 
@@ -16,106 +15,73 @@ def load_config(config_file: str = 'config.json') -> dict:
         return json.load(f)
 
 
-def run_batch_scraping(config_file: str = 'config.json'):
+def run_scraping(config_file: str = 'config.json'):
     """
-    Run batch scraping based on configuration file
+    Run scraping based on configuration file
     
     Args:
         config_file (str): Path to configuration file
     """
     print("=" * 70)
-    print("Naukri.com Batch Job Scraper")
+    print("Naukri.com Job Scraper - Config Mode")
     print("=" * 70)
     
     # Load configuration
     config = load_config(config_file)
-    search_configs = config.get('search_configs', [])
+    job_search = config.get('job_search', {})
     scraper_settings = config.get('scraper_settings', {})
     
-    if not search_configs:
-        print("No search configurations found in config.json")
+    if not job_search or not job_search.get('keyword'):
+        print("❌ Error: No job search configuration found in config.json")
+        print("Please set 'job_search' with at least a 'keyword' field")
         return
     
-    print(f"\nFound {len(search_configs)} search configurations")
-    print(f"Scraper settings: {scraper_settings}\n")
+    # Display configuration
+    print(f"\n📋 Job Search Configuration:")
+    print(f"  Name: {job_search.get('name', 'N/A')}")
+    print(f"  Keyword: {job_search['keyword']}")
+    print(f"  Location: {job_search.get('location', 'Any')}")
+    print(f"  Experience: {job_search.get('experience', 'Any')}")
+    print(f"  Max Jobs: {job_search.get('max_jobs', 40)}")
     
-    # Create output directory for this batch
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"scraping_results_{timestamp}"
-    os.makedirs(output_dir, exist_ok=True)
+    print(f"\n⚙️ Scraper Settings:")
+    print(f"  Time Filter: Last {scraper_settings.get('posted_within_days', 1)} day(s)")
+    print(f"  Deep Scrape: {'Yes' if scraper_settings.get('deep_scrape', False) else 'No'}")
+    print(f"  Headless Mode: {'Yes' if scraper_settings.get('headless', False) else 'No'}")
+    print("=" * 70 + "\n")
     
-    # Initialize scraper once for all searches
-    scraper = NaukriScraper(headless=scraper_settings.get('headless', True))
-    
-    all_results = []
+    # Initialize scraper
+    scraper = NaukriScraper(headless=scraper_settings.get('headless', False))
     
     try:
-        for idx, search_config in enumerate(search_configs, 1):
-            print(f"\n{'='*70}")
-            print(f"Search {idx}/{len(search_configs)}: {search_config['name']}")
-            print(f"{'='*70}")
-            print(f"Keyword: {search_config['keyword']}")
-            print(f"Location: {search_config.get('location', 'Any')}")
-            print(f"Experience: {search_config.get('experience', 'Any')}")
-            print(f"Pages: {search_config.get('max_pages', 1)}")
-            
-            # Run scraping
-            jobs = scraper.scrape_jobs(
-                keyword=search_config['keyword'],
-                location=search_config.get('location', ''),
-                experience=search_config.get('experience', ''),
-                max_pages=search_config.get('max_pages', 1),
-                scroll_count=scraper_settings.get('scroll_count', 5)
-            )
-            
-            # Save individual results
-            safe_name = search_config['name'].replace(' ', '_').lower()
-            output_file = os.path.join(output_dir, f"{safe_name}.json")
-            scraper.save_to_json(output_file)
-            
-            # Store for combined results
-            all_results.append({
-                'search_name': search_config['name'],
-                'search_params': search_config,
-                'jobs_found': len(jobs),
-                'jobs': jobs
-            })
-            
-            print(f"✓ Completed: {len(jobs)} jobs found")
-            
-            # Wait between searches
-            if idx < len(search_configs):
-                wait_time = 5
-                print(f"\nWaiting {wait_time} seconds before next search...")
-                time.sleep(wait_time)
-    
+        # Run scraping
+        jobs = scraper.scrape_jobs(
+            keyword=job_search['keyword'],
+            location=job_search.get('location', ''),
+            experience=job_search.get('experience', ''),
+            max_jobs=job_search.get('max_jobs', 40),
+            deep_scrape=scraper_settings.get('deep_scrape', False)
+        )
+        
+        # Generate output filename
+        safe_name = job_search.get('name', 'jobs').replace(' ', '_').lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"{safe_name}_{timestamp}.json"
+        
+        # Save results
+        scraper.save_to_json(output_file)
+        
+        # Print summary
+        print("\n" + "=" * 70)
+        print("✅ SCRAPING COMPLETED")
+        print("=" * 70)
+        print(f"Total jobs found: {len(jobs)}")
+        print(f"Results saved to: {output_file}")
+        print("=" * 70)
+        
     finally:
         scraper.close()
-    
-    # Save combined results
-    combined_output = {
-        'metadata': {
-            'total_searches': len(search_configs),
-            'total_jobs': sum(r['jobs_found'] for r in all_results),
-            'scraped_at': datetime.now().isoformat(),
-            'source': 'Naukri.com'
-        },
-        'results': all_results
-    }
-    
-    combined_file = os.path.join(output_dir, 'combined_results.json')
-    with open(combined_file, 'w', encoding='utf-8') as f:
-        json.dump(combined_output, f, indent=2, ensure_ascii=False)
-    
-    # Print summary
-    print("\n" + "=" * 70)
-    print("BATCH SCRAPING COMPLETED")
-    print("=" * 70)
-    print(f"Total searches: {len(search_configs)}")
-    print(f"Total jobs found: {combined_output['metadata']['total_jobs']}")
-    print(f"Results saved in: {output_dir}/")
-    print("=" * 70)
 
 
 if __name__ == "__main__":
-    run_batch_scraping()
+    run_scraping()
