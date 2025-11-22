@@ -41,10 +41,11 @@ def run_scraping(config_file: str = 'config.json'):
     print(f"  Keyword: {job_search['keyword']}")
     print(f"  Location: {job_search.get('location', 'Any')}")
     print(f"  Experience: {job_search.get('experience', 0)} years" if job_search.get('experience', 0) > 0 else "  Experience: Any")
-    print(f"  Max Jobs: {job_search.get('max_jobs', 40)}")
+    print(f"  Max Jobs: {job_search.get('max_jobs', 100)}")
+    print(f"  Sort By: {job_search.get('sort_by', 'date').capitalize()}")
+    print(f"  Freshness: Last {job_search.get('freshness', 1)} day(s)")
     
     print(f"\n⚙️ Scraper Settings:")
-    print(f"  Time Filter: Last {scraper_settings.get('posted_within_days', 1)} day(s)")
     print(f"  Deep Scrape: {'Yes' if scraper_settings.get('deep_scrape', False) else 'No'}")
     print(f"  Headless Mode: {'Yes' if scraper_settings.get('headless', False) else 'No'}")
     print("=" * 70 + "\n")
@@ -58,14 +59,15 @@ def run_scraping(config_file: str = 'config.json'):
             keyword=job_search['keyword'],
             location=job_search.get('location', ''),
             experience=job_search.get('experience', 0),
-            max_jobs=job_search.get('max_jobs', 40),
-            deep_scrape=scraper_settings.get('deep_scrape', False)
+            max_jobs=job_search.get('max_jobs', 100),
+            deep_scrape=scraper_settings.get('deep_scrape', False),
+            sort_by=job_search.get('sort_by', 'date'),
+            freshness=job_search.get('freshness', 1)
         )
         
-        # Generate output filename from keyword
-        safe_keyword = job_search['keyword'].replace(' ', '_').lower()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = f"{safe_keyword}_{timestamp}.json"
+        
+        # Use fixed output filename (overwrites each time)
+        output_file = "scrapped_job_details.json"
         
         # Save results
         scraper.save_to_json(output_file)

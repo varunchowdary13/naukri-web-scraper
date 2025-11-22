@@ -48,7 +48,7 @@ class NaukriScraper:
         
     def setup_driver(self, headless: bool) -> webdriver.Chrome:
         """
-        Setup Chrome WebDriver
+        Setup Chrome WebDriver with optimized options for scraping
         
         Args:
             headless (bool): Run in headless mode
@@ -58,19 +58,53 @@ class NaukriScraper:
         """
         chrome_options = Options()
         
+        # Headless mode
         if headless:
             chrome_options.add_argument('--headless')
         
+        # === INCOGNITO MODE (Clean slate every run) ===
+        chrome_options.add_argument('--incognito')
+        
+        # === SUPPRESS CHROME LOGS & ERRORS ===
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('--log-level=3')  # Only fatal errors
+        
+        # === DISABLE CHROME SERVICES (Prevent GCM/sync errors) ===
+        chrome_options.add_argument('--disable-sync')
+        chrome_options.add_argument('--disable-background-networking')
+        chrome_options.add_argument('--disable-default-apps')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-background-timer-throttling')
+        chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+        chrome_options.add_argument('--disable-breakpad')
+        chrome_options.add_argument('--disable-component-extensions-with-background-pages')
+        chrome_options.add_argument('--disable-features=TranslateUI')
+        chrome_options.add_argument('--disable-ipc-flooding-protection')
+        chrome_options.add_argument('--disable-renderer-backgrounding')
+        
+        # === DISABLE POPUPS & NOTIFICATIONS ===
+        chrome_options.add_argument('--disable-notifications')
+        chrome_options.add_argument('--disable-popup-blocking')
+        prefs = {
+            'profile.default_content_setting_values.notifications': 2,  # Block notifications
+            'profile.default_content_setting_values.popups': 0,  # Allow popups (for job links)
+            'credentials_enable_service': False,  # Disable save password prompts
+            'profile.password_manager_enabled': False  # Disable password manager
+        }
+        chrome_options.add_experimental_option('prefs', prefs)
+        
+        # === PERFORMANCE & STABILITY ===
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')  # Disable GPU acceleration
+        chrome_options.add_argument('--disable-software-rasterizer')
+        
+        # === ANTI-DETECTION ===
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        # Disable automation flags
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        self.logger.info("Launching new Chrome WebDriver...")
+        self.logger.info("Launching Chrome WebDriver in incognito mode...")
         driver = webdriver.Chrome(options=chrome_options)
         driver.maximize_window()
         
@@ -81,7 +115,7 @@ class NaukriScraper:
                         location: str = "", 
                         experience: int = 0,
                         salary: str = "",
-                        posted_within_days: int = 1) -> str:
+                        freshness: int = 1) -> str:
         """
         Build search URL with query parameters (matches Naukri's official search format)
         
@@ -90,7 +124,7 @@ class NaukriScraper:
             location (str): Job location (supports comma-separated values)
             experience (int): Experience in years (e.g., 4 for 4 years, 0 for any experience)
             salary (str): Salary range
-            posted_within_days (int): Filter jobs posted within last N days (default: 1 = last 24 hours)
+            freshness (int): Filter jobs posted within last N days (1, 3, 7, 15, 30)
             
         Returns:
             str: Formatted search URL with query parameters
@@ -117,6 +151,10 @@ class NaukriScraper:
         # Add experience parameter (integer value in years)
         if experience and experience > 0:
             params.append(f"experience={experience}")
+        
+        # Add freshness filter (jobAge parameter)
+        if freshness and freshness in [1, 3, 7, 15, 30]:
+            params.append(f"jobAge={freshness}")
         
         # Add salary if provided
         if salary:
@@ -360,8 +398,10 @@ class NaukriScraper:
                    keyword: str, 
                    location: str = "",
                    experience: int = 0,
-                   max_jobs: int = 40,
-                   deep_scrape: bool = False) -> List[Dict]:
+                   max_jobs: int = 100,
+                   deep_scrape: bool = False,
+                   sort_by: str = "date",
+                   freshness: int = 1) -> List[Dict]:
         """
         Main scraping function with auto-pagination and UI sorting
         
@@ -369,8 +409,10 @@ class NaukriScraper:
             keyword (str): Job search keyword
             location (str): Job location
             experience (int): Experience in years (e.g., 4 for 4 years, 0 for any)
-            max_jobs (int): Maximum number of jobs to scrape
+            max_jobs (int): Maximum number of jobs to scrape (default: 100)
             deep_scrape (bool): If True, visit each job to extract apply link
+            sort_by (str): Sort option - 'date' or 'relevance' (default: 'date')
+            freshness (int): Filter jobs posted within last N days (1, 3, 7, 15, 30)
             
         Returns:
             List[Dict]: List of scraped jobs
@@ -386,7 +428,7 @@ class NaukriScraper:
             self.logger.info(f"Scraping page {page} (collected {len(all_jobs)}/{max_jobs} jobs so far)")
             print(f"📄 Page {page}: {len(all_jobs)}/{max_jobs} jobs collected so far...")
             
-            search_url = self.build_search_url(keyword, location, experience, posted_within_days=1)
+            search_url = self.build_search_url(keyword, location, experience, freshness=freshness)
             if page > 1:
                 search_url += f"&page={page}" if "?" in search_url else f"?page={page}"
             
@@ -397,10 +439,11 @@ class NaukriScraper:
                 time.sleep(3)
                 
                 # UI SORTING LOGIC
-                if page == 1:
+                if page == 1 and sort_by in ['date', 'relevance']:
                     try:
-                        self.logger.info("Attempting to switch sort to 'Date' via UI...")
-                        print("⚡ Trying to click 'Sort by' dropdown...")
+                        sort_option_name = 'Date' if sort_by == 'date' else 'Relevance'
+                        self.logger.info(f"Attempting to switch sort to '{sort_option_name}' via UI...")
+                        print(f"⚡ Trying to click 'Sort by' dropdown...")
                         
                         sort_button = None
                         try:
@@ -415,22 +458,25 @@ class NaukriScraper:
                             self.driver.execute_script("arguments[0].click();", sort_button)
                             time.sleep(2)
                             
-                            print("⚡ Looking for 'Date' option...")
-                            date_option = None
+                            print(f"⚡ Looking for '{sort_option_name}' option...")
+                            sort_option = None
                             try:
-                                date_xpath = "//li//*[contains(text(), 'Date')] | //a[contains(text(), 'Date')]"
-                                date_option = self.driver.find_element(By.XPATH, date_xpath)
+                                # Try to find by text (Date or Relevance)
+                                option_xpath = f"//li//*[contains(text(), '{sort_option_name}')] | //a[contains(text(), '{sort_option_name}')]"
+                                sort_option = self.driver.find_element(By.XPATH, option_xpath)
                             except:
-                                date_option = self.driver.find_element(By.CSS_SELECTOR, "ul.dropdown li:nth-child(2)")
+                                # Fallback: Date is usually 2nd item, Relevance is 1st
+                                nth_child = "2" if sort_by == 'date' else "1"
+                                sort_option = self.driver.find_element(By.CSS_SELECTOR, f"ul.dropdown li:nth-child({nth_child})")
                                 
-                            if date_option:
-                                self.driver.execute_script("arguments[0].style.backgroundColor='yellow'", date_option)
+                            if sort_option:
+                                self.driver.execute_script("arguments[0].style.backgroundColor='yellow'", sort_option)
                                 time.sleep(1)
-                                self.driver.execute_script("arguments[0].click();", date_option)
-                                print("✓ Clicked 'Date' option!")
+                                self.driver.execute_script("arguments[0].click();", sort_option)
+                                print(f"✓ Clicked '{sort_option_name}' option!")
                                 time.sleep(3)
                             else:
-                                print("✗ Could not find 'Date' option to click")
+                                print(f"✗ Could not find '{sort_option_name}' option to click")
                                 
                     except Exception as e:
                         print(f"⚠ UI Sort failed: {str(e)}")
@@ -567,20 +613,24 @@ def main():
     parser.add_argument('--keyword', '-k', required=True, help='Job search keyword')
     parser.add_argument('--location', '-l', default='', help='Job location')
     parser.add_argument('--experience', '-e', type=int, default=0, help='Experience in years (e.g., 4 for 4 years)')
-    parser.add_argument('--max-jobs', '-m', type=int, default=40, help='Maximum jobs to scrape')
+    parser.add_argument('--max-jobs', '-m', type=int, default=100, help='Maximum jobs to scrape (default: 100)')
     parser.add_argument('--output', '-o', help='Output JSON filename')
     parser.add_argument('--headless', action='store_true', help='Run browser in headless mode')
     parser.add_argument('--deep-scrape', action='store_true', help='Visit each job to extract description')
+    parser.add_argument('--sort-by', '-s', choices=['date', 'relevance'], default='date', help='Sort by date or relevance (default: date)')
+    parser.add_argument('--freshness', '-f', type=int, choices=[1, 3, 7, 15, 30], default=1, help='Jobs posted within last N days (1, 3, 7, 15, 30)')
     
     args = parser.parse_args()
     
     print("=" * 70)
-    print("Naukri.com Job Scraper - Last 24 Hours")
+    print("Naukri.com Job Scraper")
     print("=" * 70)
     print(f"Keyword: {args.keyword}")
     print(f"Location: {args.location or 'Any'}")
     print(f"Experience: {args.experience or 'Any'}")
     print(f"Max Jobs: {args.max_jobs}")
+    print(f"Sort By: {args.sort_by.capitalize()}")
+    print(f"Freshness: Last {args.freshness} day(s)")
     print(f"Deep Scrape: {'Yes' if args.deep_scrape else 'No'}")
     print("=" * 70)
     
@@ -592,7 +642,9 @@ def main():
             location=args.location,
             experience=args.experience,
             max_jobs=args.max_jobs,
-            deep_scrape=args.deep_scrape
+            deep_scrape=args.deep_scrape,
+            sort_by=args.sort_by,
+            freshness=args.freshness
         )
         
         if jobs:

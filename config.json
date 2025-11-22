@@ -1,16 +1,17 @@
 {
     "job_search": {
-        "keyword": "Data Scientist",
+        "keyword": "Data Engineer",
         "location": "Bangalore",
         "experience": 4,
-        "max_jobs": 10
+        "max_jobs": 5,
+        "sort_by": "relevance",
+        "freshness": 1
     },
     "scraper_settings": {
         "headless": false,
         "scroll_count": 5,
         "scroll_pause_time": 2.0,
         "page_load_wait": 3,
-        "posted_within_days": 1,
         "deep_scrape": true
     }
 }
