@@ -167,7 +167,7 @@ class NaukriScraper:
     
     def get_apply_link(self, job_url: str) -> Dict[str, str]:
         """
-        Visit job details page and extract full description.
+        Visit job details page, click 'Read More' to expand full description, and extract it.
         Does NOT click apply button.
         
         Args:
@@ -186,33 +186,64 @@ class NaukriScraper:
             # Switch to new tab
             new_window = [w for w in self.driver.window_handles if w != original_window][0]
             self.driver.switch_to.window(new_window)
-            time.sleep(2)  # Wait for page to load
+            time.sleep(3)  # Wait for page to load
             
             result = {
-                'apply_link': job_url,  # Just return the post URL
+                'apply_link': job_url,
                 'apply_type': 'naukri',
                 'full_description': 'N/A'
             }
             
-            # Extract full job description
+            # Click "Read More" button to expand full description
             try:
+                # Use the exact XPath and JavaScript click (like Sort by button)
+                read_more_xpath = "/html/body/div/div/main/div[2]/div[1]/section[2]/p/a"
+                
+                try:
+                    read_more_btn = self.driver.find_element(By.XPATH, read_more_xpath)
+                    if read_more_btn and read_more_btn.is_displayed():
+                        # Highlight for debugging (optional)
+                        self.driver.execute_script("arguments[0].style.border='2px solid blue'", read_more_btn)
+                        time.sleep(0.5)
+                        
+                        # Click using JavaScript to avoid navigation
+                        self.driver.execute_script("arguments[0].click();", read_more_btn)
+                        self.logger.debug("Clicked 'Read More' button")
+                        time.sleep(2)  # Wait for description to expand
+                    else:
+                        self.logger.debug("Read More button not visible")
+                except NoSuchElementException:
+                    self.logger.debug("No 'Read More' button found (description might already be full)")
+                    
+            except Exception as e:
+                self.logger.debug(f"Error clicking 'Read More': {str(e)}")
+            
+            # Extract full job description (after expansion)
+            try:
+                # Wait for description element to be present
+                wait = WebDriverWait(self.driver, 5)
+                
                 desc_selectors = [
-                    '.job-desc',
-                    '.job-description',
-                    '[class*="description"]',
                     '.styles_JDC__dang-inner-html__h0K4t',
+                    '.job-description',
+                    '.jd-description',
+                    '[class*="job-description"]',
+                    '[class*="description"]',
+                    '.styles_job-desc',
                 ]
                 
                 for selector in desc_selectors:
                     try:
-                        desc_elem = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        desc_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
                         if desc_elem:
                             full_desc = desc_elem.text.strip()
                             if full_desc and len(full_desc) > 50:
                                 result['full_description'] = full_desc
+                                self.logger.debug(f"Extracted description: {len(full_desc)} characters")
                                 break
-                    except NoSuchElementException:
+                    except (NoSuchElementException, TimeoutException):
                         continue
+                        
             except Exception as e:
                 self.logger.debug(f"Could not extract full description: {str(e)}")
             
@@ -224,6 +255,7 @@ class NaukriScraper:
                 
         except Exception as e:
             # If anything goes wrong, close extra windows and return result
+            self.logger.warning(f"Error in get_apply_link: {str(e)}")
             try:
                 for window in self.driver.window_handles:
                     if window != original_window:
