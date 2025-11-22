@@ -79,41 +79,48 @@ class NaukriScraper:
     def build_search_url(self, 
                         keyword: str, 
                         location: str = "", 
-                        experience: str = "",
+                        experience: int = 0,
                         salary: str = "",
                         posted_within_days: int = 1) -> str:
         """
-        Build search URL with parameters
+        Build search URL with query parameters (matches Naukri's official search format)
         
         Args:
-            keyword (str): Job title or keyword
-            location (str): Job location
-            experience (str): Experience level (e.g., "0-2", "2-5")
+            keyword (str): Job title or keyword (supports comma-separated values)
+            location (str): Job location (supports comma-separated values)
+            experience (int): Experience in years (e.g., 4 for 4 years, 0 for any experience)
             salary (str): Salary range
             posted_within_days (int): Filter jobs posted within last N days (default: 1 = last 24 hours)
             
         Returns:
-            str: Formatted search URL
+            str: Formatted search URL with query parameters
         """
-        # Basic search URL format
-        search_url = f"{self.base_url}/{keyword.replace(' ', '-')}-jobs"
+        from urllib.parse import quote
+        
+        # Build base URL path (still uses hyphenated format for SEO-friendly URL)
+        search_url = f"{self.base_url}/{keyword.replace(' ', '-').lower()}-jobs"
         
         if location:
-            search_url += f"-in-{location.replace(' ', '-')}"
+            search_url += f"-in-{location.replace(' ', '-').lower()}"
         
+        # Build query parameters (Naukri's official format)
         params = []
         
-        # Add "posted within" filter (1 = last 24 hours)
-        if posted_within_days == 1:
-            params.append("freshness=1")
+        # Add keyword parameter (supports multiple comma-separated values)
+        # Use lowercase to match Naukri's format
+        params.append(f"k={quote(keyword.lower())}")
         
-        # Add sort by date (newest first)
-        params.append("sort=date")
+        # Add location parameter (supports multiple comma-separated values)
+        if location:
+            params.append(f"l={quote(location.lower())}")
         
-        if experience:
+        # Add experience parameter (integer value in years)
+        if experience and experience > 0:
             params.append(f"experience={experience}")
+        
+        # Add salary if provided
         if salary:
-            params.append(f"salary={salary}")
+            params.append(f"salary={quote(salary)}")
             
         if params:
             search_url += "?" + "&".join(params)
@@ -352,7 +359,7 @@ class NaukriScraper:
     def scrape_jobs(self, 
                    keyword: str, 
                    location: str = "",
-                   experience: str = "",
+                   experience: int = 0,
                    max_jobs: int = 40,
                    deep_scrape: bool = False) -> List[Dict]:
         """
@@ -361,7 +368,7 @@ class NaukriScraper:
         Args:
             keyword (str): Job search keyword
             location (str): Job location
-            experience (str): Experience level
+            experience (int): Experience in years (e.g., 4 for 4 years, 0 for any)
             max_jobs (int): Maximum number of jobs to scrape
             deep_scrape (bool): If True, visit each job to extract apply link
             
@@ -429,17 +436,21 @@ class NaukriScraper:
                         print(f"⚠ UI Sort failed: {str(e)}")
                         self.logger.warning(f"UI Sort failed: {e}")
                 
-                # Dynamic scrolling
+                
+                # Calculate how many jobs we still need
+                jobs_remaining = max_jobs - len(all_jobs)
+                
+                # Dynamic scrolling - only scroll until we have enough jobs for THIS page
                 current_job_count = 0
                 scrolls = 0
-                max_scrolls_limit = 10
+                max_scrolls_limit = min(5, (jobs_remaining // 5) + 2)  # Adaptive scroll limit
                 
-                while current_job_count < max_jobs and scrolls < max_scrolls_limit:
+                while current_job_count < jobs_remaining and scrolls < max_scrolls_limit:
                     job_cards = self.driver.find_elements(By.CSS_SELECTOR, ".srp-jobtuple-wrapper, .cust-job-tuple")
                     current_job_count = len(job_cards)
                     
-                    if current_job_count >= max_jobs:
-                        self.logger.info(f"Found enough jobs ({current_job_count} >= {max_jobs}), stopping scroll.")
+                    if current_job_count >= jobs_remaining:
+                        self.logger.info(f"Found enough jobs ({current_job_count} >= {jobs_remaining}), stopping scroll.")
                         break
                         
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -447,7 +458,6 @@ class NaukriScraper:
                     scrolls += 1
                     self.logger.info(f"Scrolled {scrolls} times, found {current_job_count} jobs so far...")
                 
-                jobs_remaining = max_jobs - len(all_jobs)
                 page_jobs = self.extract_job_cards(deep_scrape=deep_scrape, max_jobs_needed=jobs_remaining)
                 
                 if not page_jobs:
@@ -556,7 +566,7 @@ def main():
     parser = argparse.ArgumentParser(description='Naukri.com Job Scraper - Auto-paginates for last 24hrs jobs')
     parser.add_argument('--keyword', '-k', required=True, help='Job search keyword')
     parser.add_argument('--location', '-l', default='', help='Job location')
-    parser.add_argument('--experience', '-e', default='', help='Experience range')
+    parser.add_argument('--experience', '-e', type=int, default=0, help='Experience in years (e.g., 4 for 4 years)')
     parser.add_argument('--max-jobs', '-m', type=int, default=40, help='Maximum jobs to scrape')
     parser.add_argument('--output', '-o', help='Output JSON filename')
     parser.add_argument('--headless', action='store_true', help='Run browser in headless mode')

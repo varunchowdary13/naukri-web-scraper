@@ -1,9 +1,8 @@
 {
     "job_search": {
-        "name": "Data Scientist Jobs",
         "keyword": "Data Scientist",
-        "location": "Mumbai",
-        "experience": "",
+        "location": "Bangalore",
+        "experience": 4,
         "max_jobs": 10
     },
     "scraper_settings": {
