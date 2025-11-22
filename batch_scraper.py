@@ -37,7 +37,7 @@ def run_scraping(config_file: str = 'config.json'):
         return
     
     # Display configuration
-    print(f"\n📋 Job Search Configuration:")
+    print(f"\n Job Search Configuration:")
     print(f"  Keyword: {job_search['keyword']}")
     print(f"  Location: {job_search.get('location', 'Any')}")
     print(f"  Experience: {job_search.get('experience', 0)} years" if job_search.get('experience', 0) > 0 else "  Experience: Any")
@@ -45,7 +45,7 @@ def run_scraping(config_file: str = 'config.json'):
     print(f"  Sort By: {job_search.get('sort_by', 'date').capitalize()}")
     print(f"  Freshness: Last {job_search.get('freshness', 1)} day(s)")
     
-    print(f"\n⚙️ Scraper Settings:")
+    print(f"\n Scraper Settings:")
     print(f"  Deep Scrape: {'Yes' if scraper_settings.get('deep_scrape', False) else 'No'}")
     print(f"  Headless Mode: {'Yes' if scraper_settings.get('headless', False) else 'No'}")
     print("=" * 70 + "\n")
@@ -74,7 +74,7 @@ def run_scraping(config_file: str = 'config.json'):
         
         # Print summary
         print("\n" + "=" * 70)
-        print("✅ SCRAPING COMPLETED")
+        print(" SCRAPING COMPLETED")
         print("=" * 70)
         print(f"Total jobs found: {len(jobs)}")
         print(f"Results saved to: {output_file}")

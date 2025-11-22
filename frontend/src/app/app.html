@@ -1,0 +1,213 @@
+<div class="app-container">
+  <!-- Header -->
+  <header class="header">
+    <div class="container">
+      <div class="header-content">
+        <div class="logo-section">
+          <div class="logo-icon">🔍</div>
+          <h1 class="gradient-text">Naukri Job Scraper</h1>
+        </div>
+        <p class="subtitle">Advanced Job Search & Scraping Tool</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content container">
+
+    <!-- Alert Messages -->
+    <div *ngIf="errorMessage" class="alert alert-error fade-in">
+      <span class="alert-icon">⚠️</span>
+      <span>{{ errorMessage }}</span>
+      <button class="alert-close" (click)="clearMessages()">×</button>
+    </div>
+
+    <div *ngIf="successMessage" class="alert alert-success fade-in">
+      <span class="alert-icon">✓</span>
+      <span>{{ successMessage }}</span>
+      <button class="alert-close" (click)="clearMessages()">×</button>
+    </div>
+
+    <!-- Search Form Card -->
+    <div class="card search-card fade-in">
+      <h2 class="card-title">
+        <span class="title-icon">⚙️</span>
+        Search Configuration
+      </h2>
+
+      <form class="search-form">
+        <div class="form-grid">
+
+          <!-- Keyword -->
+          <div class="input-group">
+            <label for="keyword">
+              Job Keyword <span class="required">*</span>
+            </label>
+            <input type="text" id="keyword" [(ngModel)]="searchParams.keyword" name="keyword"
+              placeholder="e.g., Data Scientist, Software Engineer" (input)="clearMessages()" />
+          </div>
+
+          <!-- Location -->
+          <div class="input-group">
+            <label for="location">
+              Location <span class="required">*</span>
+            </label>
+            <input type="text" id="location" [(ngModel)]="searchParams.location" name="location"
+              placeholder="e.g., Mumbai, Bangalore" (input)="clearMessages()" />
+          </div>
+
+          <!-- Experience -->
+          <div class="input-group">
+            <label for="experience">
+              Experience (Years) <span class="required">*</span>
+            </label>
+            <input type="number" id="experience" [(ngModel)]="searchParams.experience" name="experience"
+              placeholder="e.g., 4" min="0" (input)="clearMessages()" />
+          </div>
+
+          <!-- Max Jobs -->
+          <div class="input-group">
+            <label for="max_jobs">
+              Maximum Jobs <span class="required">*</span>
+            </label>
+            <input type="number" id="max_jobs" [(ngModel)]="searchParams.max_jobs" name="max_jobs"
+              placeholder="e.g., 50" min="1" (input)="clearMessages()" />
+          </div>
+
+          <!-- Sort By -->
+          <div class="input-group">
+            <label for="sort_by">
+              Sort By <span class="required">*</span>
+            </label>
+            <select id="sort_by" [(ngModel)]="searchParams.sort_by" name="sort_by" (change)="clearMessages()">
+              <option *ngFor="let option of sortOptions" [value]="option">
+                {{ option | titlecase }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Freshness -->
+          <div class="input-group">
+            <label for="freshness">
+              Job Freshness <span class="required">*</span>
+            </label>
+            <div class="freshness-container">
+              <select id="freshness" [(ngModel)]="searchParams.freshness" name="freshness" (change)="clearMessages()">
+                <option value="">Select...</option>
+                <option *ngFor="let days of freshnessOptions" [value]="days">
+                  {{ days }}
+                </option>
+              </select>
+              <span class="freshness-label">days</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Submit Button -->
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary btn-search"
+            [disabled]="!isFormValid() || scrapingStatus.state === 'running'" (click)="startScraping()">
+            <span *ngIf="scrapingStatus.state !== 'running'">🚀 Start Scraping</span>
+            <span *ngIf="scrapingStatus.state === 'running'">
+              <span class="spinner-small"></span>
+              Scraping...
+            </span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Progress Card -->
+    <div *ngIf="scrapingStatus.state === 'running' || scrapingStatus.state === 'failed'"
+      class="card progress-card fade-in">
+      <h3 class="card-title">
+        <span class="title-icon">📊</span>
+        Scraping Progress
+      </h3>
+
+      <div class="progress-info">
+        <div class="progress-bar-container">
+          <div class="progress-bar" [style.width.%]="scrapingStatus.progress"
+            [class.error]="scrapingStatus.state === 'failed'">
+            <span class="progress-text">{{ scrapingStatus.progress }}%</span>
+          </div>
+        </div>
+
+        <p class="progress-message">
+          <span class="pulse-dot" *ngIf="scrapingStatus.state === 'running'"></span>
+          {{ scrapingStatus.message }}
+        </p>
+
+        <p class="progress-time" *ngIf="scrapingStatus.last_updated">
+          Last updated: {{ formatDate(scrapingStatus.last_updated) }}
+        </p>
+      </div>
+    </div>
+
+    <!-- Results Table -->
+    <div *ngIf="showResults && jobs.length > 0" class="card results-card fade-in">
+      <div class="results-header">
+        <h2 class="card-title">
+          <span class="title-icon">📋</span>
+          Scraped Jobs
+        </h2>
+        <div class="results-meta">
+          <span class="badge">{{ jobs.length }} Jobs Found</span>
+          <span class="badge" *ngIf="metadata">
+            Scraped: {{ formatDate(metadata.scraped_at) }}
+          </span>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="jobs-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Job Title</th>
+              <th>Company</th>
+              <th>Experience</th>
+              <th>Salary</th>
+              <th>Location</th>
+              <th>Posted</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let job of jobs; let i = index" class="job-row">
+              <td class="job-index">{{ i + 1 }}</td>
+              <td class="job-title">{{ job.title }}</td>
+              <td class="job-company">{{ job.company }}</td>
+              <td class="job-experience">{{ job.experience }}</td>
+              <td class="job-salary">{{ job.salary }}</td>
+              <td class="job-location">{{ job.location }}</td>
+              <td class="job-posted">{{ job.posted_date }}</td>
+              <td class="job-actions">
+                <button class="btn-icon" (click)="openJobLink(job.apply_link || job.job_url)"
+                  title="Open job in new tab">
+                  🔗
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div *ngIf="showResults && jobs.length === 0" class="card empty-state fade-in">
+      <div class="empty-icon">📭</div>
+      <h3>No Jobs Found</h3>
+      <p>Try adjusting your search parameters and scrape again.</p>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p>© 2025 Naukri Job Scraper | Built with Angular & Flask</p>
+    </div>
+  </footer>
+</div>
